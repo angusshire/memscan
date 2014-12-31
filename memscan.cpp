@@ -1,181 +1,61 @@
-#include <iostream>
-#include <string>
-#include <vector>
-#include <ctime>
-using namespace std;
-#include <windows.h>
-#include <Psapi.h>
-
 // Author: 4148
 // Copyright (c) 2014.
 // All rights reserved.
 
-// arises from need to store the matching value, size of value, and associated address
-typedef struct Match {
-	HMODULE address;
-	DWORD64 value;
-	size_t size;
-} Match;
+// implementation file for Memscan.h
 
-// function prototypes
-string basename(string path);
-wstring basename(wstring path);
-wstring to_wstring(string s);
-wstring to_upper(wstring ws);
-HMODULE get_base_address(HANDLE process_handle, wstring path);
-void process_memblock(DWORD64 memblock, vector<Match*>& matches, DWORD64, const bool VALUE_SPECIFIED = false, const DWORD64 value = NULL);
-void delete_matches(const vector<Match*>&);
+#include "Memscan.h"
 
-// returns the base address of a given process
-// path is the .exe's file path, process_handle is the value returned by OpenProcess()
-HMODULE get_base_address(HANDLE process_handle, wstring path) {
-	HMODULE rtn = NULL;
-	DWORD hmarr_size = 10;
-	// holds array of modules output by EnumProcessModules()
-	HMODULE* hmarr = new HMODULE[hmarr_size];
-	// bytes needed
-	DWORD needed = 0;
-	// get array of modules associated with the target process; use extended version to enum 64-bit processes
-	int result = EnumProcessModulesEx(process_handle, hmarr, hmarr_size, &needed, LIST_MODULES_ALL);
-	if (needed > hmarr_size) {
-		delete[] hmarr;
-		hmarr = new HMODULE[needed];
-		result = EnumProcessModulesEx(process_handle, hmarr, needed, &needed, LIST_MODULES_ALL);
-	}
-	if (0 == result) {
-		cerr << "Error: EnumProcessModules() failed in " << basename(__FILE__) << ":" << __LINE__ << ". Last error: " << GetLastError() << "." << endl;
-		cerr << "Variables: needed: " << needed << "." << endl;
+// constructor sets instance vars
+// args: pin: name of process to be scanned
+Memscan::Memscan(string pin) {
+	if (pin.find(".exe") == string::npos) { pin.append(".exe"); } // appends '.exe' if extension not there
+	processImageName = pin;
+	// sets SIZE_SPECIFIED flag to false
+	vector<SIZE_T> s;
+	s.push_back(4); // default scan size is DWORD (4 bytes)
+	setSizeSpecified(false, s);
+
+	// sets BASEADDRESS and PROCESSHANDLE
+	if (processImageName.length() == 0) {
+		cerr << "Error: processImageName must be set." << endl;
 		exit(1);
 	}
-
-	wchar_t* module_path = new wchar_t[path.length()+1];
-	// find module of specified path
-	for (int i = 0; i < (needed/sizeof(HMODULE)); i++) {
-		GetModuleFileNameEx(process_handle, hmarr[i], module_path, (DWORD) path.length());
-		if (to_upper(basename(path)) == to_upper(basename(module_path))) {
-			rtn = hmarr[i];
-			break;
-		}
-	}
-	
-	delete[] module_path;
-	delete[] hmarr;
-	return rtn;
-}
-
-// converts wstring to uppercase
-wstring to_upper(wstring ws) {
-	wchar_t* warr = new wchar_t[ws.length()+1];
-	for (int i = 0; i < ws.length()+1; i++) {
-		warr[i] = towupper(ws[i]);
-	}
-	wstring temp(warr);
-	delete[] warr;
-	return temp;
-}
-
-// returns a wstring representation of string s
-wstring to_wstring(string s) {
-	wchar_t* warr = new wchar_t[s.length()+1];
-	mbstowcs(warr, s.c_str(), s.length()+1);
-	wstring rtn(warr);
-	delete[] warr;
-	return rtn; // return by value
-}
-
-// returns the file name of a path
-// works for both '\\' and '/' delimiters
-string basename(string path) {
-	int cutoff = path.length()-2; // -2 instead of -1 just in case last char is '/'
-	while (cutoff >= 0 && (path.at(cutoff) != '\\' && path.at(cutoff) != '/')) { cutoff--; }
-	if (cutoff < 0) { return path; }
-	return path.substr(cutoff+1);
-}
-// wide string version
-wstring basename(wstring path) {
-	int cutoff = path.length()-2; // -2 instead of -1 just in case last char is '/'
-	while (cutoff >= 0 && (path.at(cutoff) != '\\' && path.at(cutoff) != '/')) { cutoff--; }
-	if (cutoff < 0) { return path; }
-	return path.substr(cutoff+1);
-}
-
-// memory scanner for 64-bit Windows
-// (1) initialize process image name and value to be scanned (if specified) based on input
-// (2) get handle to the first instance of the process with specified image name
-// (3) scan process for value, if specified
-
-// (2) scan specified process for value, keeping track of all the addresses in which it occurs
-// (3) if -m flag is used, monitor those addresses for changes
-// (4) 
-// (2) scans process for specified value and/or changes
-// freeze value by writing with new value, using timer to write memory in every time period
-int main(int argc, char* argv[]) {
-	BOOL b = false;
-	// determines whether current process is running under WOW64.
-	// Should always be false, because cannot read memory from a 64-bit module on a 32-bit process (cannot create selector to all addresses on 64-bit, unlike 16-bit to 32-bit)
-	IsWow64Process(GetCurrentProcess(), &b);
-	// EnumProcessModules() fails when a 32-bit process tries to enum 64-bit modules, so changed active solution platform to x64
-	if (b == true) {
-		cerr << "Error: Current process is running under WOW64." << endl;
-		exit(1);
-	}
-	
-	clock_t beg = clock();
-	//if (argc != 2) {
-		cout << "Usage: memscan processImageName [-v value] [-m] [-bwdq]" << endl;
-		cout << "Scans specified process for memory addresses. Prints first 100 matches." << endl;
-		cout << "\t-v value: value to match addresses against." << endl;
-		cout << "\t-m: monitor matching addresses for changes." << endl;
-		cout << "\t-bwdq: specifies combination of container sizes to match addresses against." << endl;
-		cout << "\t-b is byte, -w is word (16 bits), -d is doubleword, -q is quadword." << endl;
-		cout << "\t Default matches only doublewords." << endl;
-	//}
-
-	// name of process to be scanned
-	string process_image_name("minesweeper");
-	if (process_image_name.find(".exe") == string::npos) { process_image_name.append(".exe"); } // appends '.exe' if extension not there
-	// flag for whether value is specified
-	const bool VALUE_SPECIFIED = false;
-	// flag for whether sizes to read is specified
-	const bool SIZE_SPECIFIED = false;
-	// value to be scanned for
-	int value;
 
 	// number of processses 	
-	size_t num_processes = 100;
+	DWORD num_processes = 100;
 	// contains all process ids
 	DWORD* process_ids = new DWORD[num_processes];
 	DWORD bytes_returned = 0;
 	// loop retrieves all process ids into process_ids
 	while (true) {
-		if (0 == EnumProcesses(process_ids, num_processes*4, &bytes_returned)) {
-			// when used inside the function, __FILE__ is the path of file in which function was defined, not where it was called
+		if (0 == EnumProcesses(process_ids, num_processes*sizeof(DWORD), &bytes_returned)) {
 			cerr << "Error: EnumProcesses() failed in " << basename(__FILE__) << ":" << __LINE__ << ". Last error: " << GetLastError() << "." << endl;
 			exit(1);
 		}
-		if (bytes_returned < (num_processes*4)) { break; }
+		if (bytes_returned < (num_processes*sizeof(DWORD))) { break; }
 		num_processes *= 2;
 		delete[] process_ids;
 		process_ids = new DWORD[num_processes];
 	}
 	num_processes = bytes_returned / 4;
 
-	// contains handle of current process
+	// contains handle of target process
 	HANDLE process_handle;
-	// virtual base address .exe process; in Windows NT, base address is module's handle; HMODULE = HINSTANCE, but were different things in 16-bit Windows
+	// virtual base address of target process (where .exe map begins)
 	HMODULE base_address;
 	// loops gets handle of process with specified image name
 	for (int i = 0; i < num_processes; i++) {
-		if (process_ids[i] == 0) { continue; } // ignore system process
+		if (0 == process_ids[i]) { continue; } // ignore system process
 		// gets handle to process from process id
-		process_handle = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ | PROCESS_VM_WRITE, FALSE, process_ids[i]);
+		process_handle = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION, FALSE, process_ids[i]);
 		if (NULL == process_handle) {
 			if (ERROR_ACCESS_DENIED == GetLastError()) { continue; } // ignore idle processes and CSRSS processes
 			cerr << "Error: OpenProcess() failed in " << basename(__FILE__) << ":" << __LINE__ << ". Last error: " << GetLastError() << "." << endl;
 			exit(1);
 		}
 
-		size_t temp_size = MAX_PATH;
+		DWORD temp_size = MAX_PATH;
 		// process name
 		wchar_t* temp_process_name = new wchar_t[temp_size];
 		// loop gets process name from process handle
@@ -192,7 +72,7 @@ int main(int argc, char* argv[]) {
 			}
 		}
 		// case insensitive name comparison
-		if (to_upper(to_wstring(process_image_name)) == to_upper(basename(temp_process_name))) {
+		if (to_upper(to_wstring(processImageName)) == to_upper(basename(temp_process_name))) {
 			// if process name matches specified image name, get base address, then break (process handle will be closed later)
 			base_address = get_base_address(process_handle, temp_process_name);
 			if (NULL == base_address) {
@@ -209,102 +89,275 @@ int main(int argc, char* argv[]) {
 		}
 	}
 
+	delete[] process_ids;
+
 	if (NULL == process_handle) {
-		cerr << "Error: Unable to find process with image name " << process_image_name << "." << endl;
+		cerr << "Error: Unable to find process with image name " << processImageName << "." << endl;
 		exit(1);
 	} else {
-		// specified sizes of memory block to read
-		vector<SIZE_T> sizes;
-		if (SIZE_SPECIFIED) {
-			
-		} else { sizes.push_back(4); }
+		processHandle = process_handle;
+		baseAddress = base_address;
+	}
+	
+	// default SCANATTRIBUTE is NONE
+	scanAttribute = SCAN_ATTRIBUTE::NONE;
+	// first scan
+	RESCAN = false;
+}
 
-		// initial base address (for debugging purposes)
-		HMODULE initial_address = base_address;
-		// how many times we've looped (for debugging purposes)
-		int iteration = 0;
-		// vector of matching values
-		vector<Match*> matches;
-		while (true) {
-			// bytes retrieved
-			SIZE_T bytes_transferred = 0;
-			// num DWORD64s to read; optimal is one pass (apparenty 120,000 for MineSweeper.exe is 2 times faster than 80000, probably because it requires only a single iteration)
-			const size_t num_d64 = 120000;
-			cout << sizeof(size_t) << endl;
-			// num bytes to read
-			SIZE_T block_size = num_d64*sizeof(DWORD64);
-			DWORD64 memblock[num_d64];
-			// increment for base_address, in sizeof(int) units
-			size_t increment = block_size / sizeof(int);
-			// itc, pointer means variable that contains memory address rather than the memory address itself1
-			if (0 == ReadProcessMemory(process_handle, base_address, memblock, block_size, &bytes_transferred)) {
-				if (ERROR_PARTIAL_COPY == GetLastError()) {
-					// readjusts block_size and num_d64 accordingly, by halving and doubling until the correct number of bytes is reached
-					while (true) {
-						do {
-							num_d64 /= 2;
-							block_size = num_d64*sizeof(DWORD64);
-						} while (0 == ReadProcessMemory(process_handle, base_address, memblock, block_size, &bytes_returned));
-						if (bytes_transferred == block_size) {
-							num_d64 *= 2; 
-						} else {
-							break;
-						}
-					}
-				} else {	
-					cout << "Warning: ReadProcessMemory() failed in " << basename(__FILE__) << ":" << __LINE__ << ". Last error: " << GetLastError() << "." << endl;
-					cout << "Variables: bytes_transferred: " << bytes_transferred << ", block_size: " << block_size << ", iteration: " << iteration << << ", base_address: " << base_address << ", initial_address: " << initial_address << "." << endl;
-					break;
-				}
+// frees memory and removes everything in MATCHES
+void Memscan::deleteMatches() {
+	while (!matches.empty()) {
+		delete matches.back();
+		matches.pop_back();
+	}
+}
+
+// setter for SIZE_SPECIFIED flag
+// args: b: bool to set flag to; s: vector of sizes to read from memory
+void Memscan::setSizeSpecified(bool b, vector<SIZE_T>& s) {
+	SIZE_SPECIFIED = b;
+	for (SIZE_T size : s) {
+		if (size != 1 && size != 2 && size != 4 && size != 8) {
+			cout << "Error: size must be 1 (byte), 2 (word), 4 (dword), or 8 (quadword)." << endl;
+			exit(1);
+		}
+	}
+	sizes = s;
+}
+
+// prints out specified matches formatted by their Match type
+// args: limit: number of entries to print IN TOTAL (default is 100)
+void Memscan::printMatches(size_t limit) {
+	cout << "Printing first " << limit << " matches (" << matches.size() << " matches total)... FORMAT: [base address: offset: value]" << endl;
+	ostringstream b, w, d, q;
+	size_t num_entries = 0;
+	for (Match* m : matches) {
+		if (num_entries >= limit) {
+			break;
+		}
+		if (1 == m->size) { // size is BYTE
+			b << hex << uppercase << DWORD64(m->address) << nouppercase << dec << ": " << m->offset << ": " << m->value << endl;
+		} else if (2 == m->size) { // size is WORD
+			w << hex << uppercase << DWORD64(m->address) << nouppercase << dec << ": " << m->offset << ": " << m->value << endl;
+		} else if (4 == m->size) { // size is DWORD
+			d << hex << uppercase << DWORD64(m->address) << nouppercase << dec << ": " << m->offset << ": " << m->value << endl;
+		} else if (8 == m->size) { // size is QUADWORD
+			q << hex << uppercase << DWORD64(m->address) << nouppercase << dec << ": " << m->offset << ": " << m->value << endl;
+		} else {
+			cout << "Error: size not specified." << endl;
+			exit(1);
+		}
+		num_entries++;
+	}
+	if (b.str().length() != 0) {
+		cout << "BYTE" << endl;
+		cout << b.str();
+	}
+	if (w.str().length() != 0) {
+		cout << "WORD" << endl;
+		cout << w.str();
+	}
+	if (d.str().length() != 0) {
+		cout << "DWORD" << endl;
+		cout << d.str();
+	}
+	if (q.str().length() != 0) {
+		cout << "QUADWORD" << endl;
+		cout << q.str();
+	}
+}
+
+// adds a Match* to MATCHES
+// args: BASE_ADDRESS: base address of Match; VALUE: value found at address BASE_ADDRESS+(SIZE*OFFSET),
+// [args con't] SIZE: size of VALUE, in bytes; OFFSET: offset to BASE_ADDRESS where VALUE is found, in terms of SIZE 
+void Memscan::addMatch(HMODULE base_address, DWORD64 value, size_t size, size_t offset) {
+	Match* match = new Match;
+	match->address = base_address;
+	match->value = value;
+	match->size = size;
+	match->offset = offset;
+	if (matches.max_size() == matches.size()) {
+		cout << "Warning: Maximum size reached for MATCHES." << endl;
+	} else {
+		matches.push_back(match);
+	}
+}
+
+// processes the MEMBLOCK by finding matches to SCANVALUE (if specified) of specified size; adds matches to MATCHES
+// args: MEMBLOCK: array of read memory values; MEMBLOCK_SIZE: size of memory block; BASE_ADDRESS: address where first value in MEMBLOCK was read
+void Memscan::processMemblock(DWORD64* memblock, DWORD64 memblock_size, HMODULE base_address) {
+	for (int i = 0; i < memblock_size; i++) {
+		DWORD64 value = memblock[i];
+		DWORD64 initial = value;
+		HMODULE matchBaseAddress = base_address + (i * 2); // +(i*2) because HMODULE values are incremented in sizeof(int) units; DWORD64 = 2 * sizeof(int)
+		for (SIZE_T size : sizes) {
+			DWORD64 mask = 0; 
+			if (size == 8) { // necessary because left shift is undefined if right operand equals to number of bits in left operand
+				mask = 0xffffffffffffffff;
 			} else {
-			
-				base_address += increment; // pointer arithmetic in C++: unit of increment is sizeof thing pointed to
+				mask = ~(0xffffffffffffffff << (size * 8)); // masks last SIZE*8 bits
 			}
+			// Windows NT is little-endian
+			for (int i = 0; i < (sizeof(DWORD64)/size); i++) {
+				if ((SCAN_ATTRIBUTE::NONE == scanAttribute) || ((SCAN_ATTRIBUTE::VALUE == scanAttribute) && ((value & mask) == scanValue))) {
+					addMatch(matchBaseAddress, (value & mask), size, i);
+				}
+				if (size < 8) {
+					value >>= (size * 8); // shifts right by SIZE*8 bits
+				}
+			}
+			value = initial;
+		}
+	}
+}
 
-
-//		
-//		}
+// scans memory according to SCANATTRIBUTE, and adds matches to MATCHES
+void Memscan::scan() {
+	// rescans MATCHES with specified attributes if first scan already done
+	if (RESCAN) {
+		rescan();
+		return;
+	}
+	// empties MATCHES and FROZEN if first scan
+	if (!matches.empty()) { deleteMatches(); deleteFrozen(); }
+	// local base address (so member variable is not changed)
+	HMODULE base_address = baseAddress;
+	// initial base address (for debugging purposes)
+	HMODULE initial_address = baseAddress;
+	// how many times we've looped (for debugging purposes)
+	int iteration = 0;
+	// bytes retrieved
+	SIZE_T bytes_transferred = 0;
+	// num DWORD64s to read;
+	SIZE_T num_d64 = 100000;
+	// num bytes to read
+	SIZE_T block_size = num_d64*sizeof(DWORD64);
+	// array of DWORD64s to copy memory values into
+	DWORD64* memblock = new DWORD64[num_d64];
+	// increment for base_address, in sizeof(int) units
+	SIZE_T increment = block_size / sizeof(int);
+	while (true) {
+		if (0 == ReadProcessMemory(processHandle, base_address, memblock, block_size, &bytes_transferred)) {
+			if (ERROR_PARTIAL_COPY == GetLastError()) {
+				// readjusts block_size and num_d64 accordingly, by halving and doubling until the correct number of bytes is reached
+				while (1 <= num_d64) {
+					while ((1 <= num_d64) && (0 == ReadProcessMemory(processHandle, base_address, memblock, block_size, &bytes_transferred))) {
+						num_d64 /= 2; // no need to ceil, since once it reaches 1 it will read the rest
+						block_size = num_d64*sizeof(DWORD64);
+						increment = block_size / sizeof(int);
+						assert(block_size % 4 == 0);
+					}
+					processMemblock(memblock, num_d64, base_address);
+					base_address += increment;
+				}
+				break;
+			} else {	
+				cout << "Warning: ReadProcessMemory() failed in " << basename(__FILE__) << ":" << __LINE__ << ". Last error: " << GetLastError() << "." << endl;
+				cout << "Variables: bytes_transferred: " << bytes_transferred << ", block_size: " << block_size << ", iteration: " << iteration << endl;
+				cout << "Variables [con't]: base_address: " << base_address << ", initial_address: " << initial_address << endl;
+				cout << "Variables [con't]: base_address-initial_address: " << base_address-initial_address << endl;
+				break;
+			}
+		} else {
+			processMemblock(memblock, num_d64, base_address);
+			base_address += increment;
 			iteration++;
 		}
-		delete_matches(matches);
 	}
-		
-	
-	delete[] process_ids;
-	CloseHandle(process_handle);
-
-	clock_t end = clock();
-	double diff = double(end - beg) / CLOCKS_PER_SEC;
-	cout << "Execution took " << diff << " seconds." << endl;
+	delete[] memblock;
+	RESCAN = true;
 }
 
-void freeze(HMODULE address, int value) {
+// rescans MATCHES with specified attribute
+void Memscan::rescan() {
+	// leave original matches unmodified if attribute not specified
+	if (SCAN_ATTRIBUTE::NONE == scanAttribute) {
+		return;
+	} else {
+		matches.erase(remove_if(matches.begin(), matches.end(), [this](Match* m)->bool{
+			SIZE_T bytes_transferred;
+			DWORD64 value = 0;
+			DWORD64 address = DWORD64(m->address) + DWORD64((m->size) * (m->offset)); 
+			if (0 == ReadProcessMemory(processHandle, (HMODULE) address, &value, m->size, &bytes_transferred)) {
+				cout << "Warning: ReadProcessMemory() failed in rescan()." << endl;
+				return false;
+			} 
+
+			// if attribute condition is satisifed, leave Match; otherwise, erase it
+			if (((scanAttribute == SCAN_ATTRIBUTE::CHANGED) && m->value != value) ||
+				((scanAttribute == SCAN_ATTRIBUTE::UNCHANGED) && m->value == value) ||
+				((scanAttribute == SCAN_ATTRIBUTE::INCREASED) && m->value < value) ||
+				((scanAttribute == SCAN_ATTRIBUTE::DECREASED) && m->value > value) ||
+				((scanAttribute == SCAN_ATTRIBUTE::VALUE) && value == scanValue)) {
+				m->value = value;
+				return false;
+			} else {
+				delete m;
+				return true;
+			}
+		}), matches.end());
+	}
 }
 
+// sets SCANATTRIBUTE to specified attribute
+// args: RA: value to set SCANATTRIBUTE to; V: value to set SCANVALUE to
+void Memscan::setScanAttribute(SCAN_ATTRIBUTE ra, DWORD64 v) {
+	scanAttribute = ra;
+	if (SCAN_ATTRIBUTE::VALUE == scanAttribute) {
+		scanValue = v;
+	}
+}
 
+// begins a new scan for the process by deleting all matches, setting RESCAN to false, reinitializing SIZES, and resetting SCANATTRIBUTE
+void Memscan::newscan(vector<SIZE_T>& s) {
+	RESCAN = false;
+	deleteMatches();
+	deleteFrozen();
+	setSizeSpecified(true, s);
+	setScanAttribute(SCAN_ATTRIBUTE::NONE);
+}
 
+// adds a Match* to FROZEN
+// args: BASE_ADDRESS: base address of Match; VALUE: value to be written at address BASE_ADDRESS+(SIZE*OFFSET),
+// [args con't] SIZE: size of VALUE, in bytes; OFFSET: offset to BASE_ADDRESS where VALUE is to be written, in terms of SIZE 
+void Memscan::addFrozen(HMODULE base_address, DWORD64 value, size_t size, size_t offset) {
+	Match* match = new Match;
+	match->address = base_address;
+	match->value = value;
+	match->size = size;
+	match->offset = offset;
+	if (frozen.max_size() == frozen.size()) {
+		cout << "Warning: Maximum size reached for FROZEN." << endl;
+	} else {
+		frozen.push_back(match);
+	}
+}
 
-void process_memblock(SIZE_T sizes, DWORD64* memblock, vector<Match*>& matches, DWORD64, HMODULE base_address, const bool VALUE_SPECIFIED = false, const DWORD64 value = NULL);
-// processes the specified memory block by finding the matches to the value (if specified) and then putting them into the matches array
-// arguments: sizes: which sizes to read from memblock, memblock: array of read memory values, base_address: address from which memblock[0] was read, 
-// [arguments con't] base_address: base address of the last meblock read, VALUE_SPECIFIED: whether value is specified, value: if VALUE_SPECIFIED == true, then value to search for 
-void process_memblock(SIZE_T sizes, DWORD64* memblock, DWORD64 memblock_size, vector<Match*>& matches, HMODULE base_address, const bool VALUE_SPECIFIED, const DWORD64 value) {
-	for (int i = 0; i < memblock_size; i++) {
-		for (SIZE_T size : sizes) {
-			if (value == memblock[i] || !VALUE_SPECIFIED) {
-				Match* match = new Match;
-				match->address = base_address + i; 
-				match->value = value;
-				match->size = size;
-				matches.push_back(match);		
+// frees memory and removes everything in FROZEN
+void Memscan::deleteFrozen() {
+	while (!frozen.empty()) {
+		delete frozen.back();
+		frozen.pop_back();
+	}
+}
+
+// freezes Matches* in FROZEN at 100ms intervals
+// this method should be called in a secondary thread
+void Memscan::freeze() {
+	while (true) {
+		for (Match* m : frozen) {
+			DWORD64 address = DWORD64(m->address) + (m->offset * m->size);
+			DWORD64 write_val = m->value;
+			SIZE_T bytes_transferred = 0;
+			if (0 == WriteProcessMemory(processHandle, HMODULE(address), &write_val, SIZE_T(m->size), &bytes_transferred)) {
+				if (ERROR_NOACCESS == GetLastError()) {
+					cout << "WriteProcessMemory() failed with ERROR_NOACCESS error with address " << hex << address << dec << "." << endl;
+				} else {
+					cout << "WriteProcessMemory() failed with address " << hex << address << dec << " and error " << GetLastError() << "." << endl;
+				}
 			}
 		}
-	}
-}
-
-// deletes specified matches
-void delete_matches(const vector<Match*>& matches) {
-	for (Match* m : matches) {
-		delete matches;
+		Sleep(100);
 	}
 }
