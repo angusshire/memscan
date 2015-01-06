@@ -49,7 +49,7 @@ public:
 	// PUBLIC METHODS
 	// constructor sets instance vars
 	// args: pin: name of process to be scanned
-	Memscan(string pin);
+	Memscan(string pin, PROCESS_MODE process_mode);
 	// destructor for Memscan
 	~Memscan() {
 		deleteMatches();
@@ -78,6 +78,8 @@ public:
 	void freeze();
 private:
 	// MEMBER VARS
+	// USER_MODE for user-mode process, KERNEL_MODE for kernel-mode process
+	PROCESS_MODE processMode;
 	// true iff SIZES is specified
 	bool SIZE_SPECIFIED;
 	// true iff scan() has been called atleast once
@@ -98,6 +100,8 @@ private:
 	HMODULE baseAddress;
 	// specifies scan() behavior
 	SCAN_ATTRIBUTE scanAttribute;
+	// max and min addresses of VAS
+	DWORD64 VAS_MAX, VAS_MIN;
 	
 	// HELPER METHODS
 	// frees memory and removes everything in MATCHES
@@ -112,5 +116,7 @@ private:
 	// rescans MATCHES with specified attribute
 	void rescan();
 	// frees memory and removes everything in FROZEN
-	void deleteFrozen();
+	void deleteFrozen();	
+	// sets VAS_MIN and VAS_MAX
+	void setVasBounds();
 };
