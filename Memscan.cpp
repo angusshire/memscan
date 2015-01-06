@@ -8,7 +8,7 @@
 
 // constructor sets instance vars
 // args: pin: name of process to be scanned
-Memscan::Memscan(string pin) {
+Memscan::Memscan(string pin, PROCESS_MODE process_mode) {
 	if (pin.find(".exe") == string::npos) { pin.append(".exe"); } // appends '.exe' if extension not there
 	processImageName = pin;
 	// sets SIZE_SPECIFIED flag to false
@@ -103,6 +103,41 @@ Memscan::Memscan(string pin) {
 	scanAttribute = SCAN_ATTRIBUTE::NONE;
 	// first scan
 	RESCAN = false;
+
+	// sets mode
+	processMode = process_mode;
+	// removes permissions from pages of process being scanned
+	remove_permissions(processHandle, processMode);
+	// sets VAS_MIN, VAS_MAX
+	setVasBounds();
+}
+
+// sets VAS_MIN and VAS_MAX
+void Memscan::setVasBounds() {
+	BOOL b = FALSE;
+	// if 32-bit, B set to TRUE
+	IsWow64Process(processHandle, &b);
+	if (b == TRUE) {
+		// in 32-bit, user space is lower 2 gibibytes
+		if (PROCESS_MODE::USER_MODE == processMode) {
+			VAS_MIN = 0x0;
+			VAS_MAX = 0x7FFFFFFF;
+		// in 32-bit, system space is upper 2 gibibytes
+		} else if (PROCESS_MODE::KERNEL_MODE == processMode) {
+			VAS_MIN = 0x80000000;
+			VAS_MAX = 0xFFFFFFFF;
+		}
+	} else {
+		// in 64-bit, user space is 8 tebibytes
+		if (PROCESS_MODE::USER_MODE == processMode) {
+			VAS_MIN = 0x0;
+			VAS_MAX = 0x7FFFFFFFFFF;
+		// in 64-bit, system space is 248 tebibytes
+		} else if (PROCESS_MODE::KERNEL_MODE == processMode) {
+			VAS_MIN = 0xFFFF080000000000;
+			VAS_MAX = 0xFFFFFFFFFFFFFFFF;
+		}
+	}
 }
 
 // frees memory and removes everything in MATCHES
@@ -222,9 +257,7 @@ void Memscan::scan() {
 	// empties MATCHES and FROZEN if first scan
 	if (!matches.empty()) { deleteMatches(); deleteFrozen(); }
 	// local base address (so member variable is not changed)
-	HMODULE base_address = baseAddress;
-	// initial base address (for debugging purposes)
-	HMODULE initial_address = baseAddress;
+	HMODULE base_address = HMODULE(VAS_MIN);
 	// how many times we've looped (for debugging purposes)
 	int iteration = 0;
 	// bytes retrieved
@@ -237,26 +270,46 @@ void Memscan::scan() {
 	DWORD64* memblock = new DWORD64[num_d64];
 	// increment for base_address, in sizeof(int) units
 	SIZE_T increment = block_size / sizeof(int);
-	while (true) {
+	while (base_address <= HMODULE(VAS_MAX)) {
+		MEMORY_BASIC_INFORMATION memfo;
+		// gets page region info
+		if (check_winapi_error(0, VirtualQueryEx(processHandle, base_address, &memfo, sizeof(MEMORY_BASIC_INFORMATION)), "VirtualQueryEx()", false)) {
+			// max address reached
+			if (ERROR_INVALID_PARAMETER == GetLastError()) {
+				break;
+			} else {
+				cerr << "Error: VirtualQueryEx() failed. Last error: " << GetLastError() << "." << endl;
+				exit(1);
+			}
+		}
+		// skip over free regions and reserved regions
+		if (MEM_FREE == memfo.State || MEM_RESERVE == memfo.State) {
+			// resets num_d64 and associated vars
+			num_d64 = 100000;
+			block_size = num_d64*sizeof(DWORD64);
+			increment = block_size / sizeof(int);
+			base_address += memfo.RegionSize;
+			continue;
+		}
+
 		if (0 == ReadProcessMemory(processHandle, base_address, memblock, block_size, &bytes_transferred)) {
 			if (ERROR_PARTIAL_COPY == GetLastError()) {
+				bool FIRST = true;
 				// readjusts block_size and num_d64 accordingly, by halving and doubling until the correct number of bytes is reached
 				while (1 <= num_d64) {
-					while ((1 <= num_d64) && (0 == ReadProcessMemory(processHandle, base_address, memblock, block_size, &bytes_transferred))) {
+					while ((1 <= num_d64) && (FIRST || (0 == ReadProcessMemory(processHandle, base_address, memblock, block_size, &bytes_transferred)))) {
 						num_d64 /= 2; // no need to ceil, since once it reaches 1 it will read the rest
 						block_size = num_d64*sizeof(DWORD64);
 						increment = block_size / sizeof(int);
-						assert(block_size % 4 == 0);
+						FIRST = false;
 					}
 					processMemblock(memblock, num_d64, base_address);
 					base_address += increment;
 				}
-				break;
 			} else {	
 				cout << "Warning: ReadProcessMemory() failed in " << basename(__FILE__) << ":" << __LINE__ << ". Last error: " << GetLastError() << "." << endl;
 				cout << "Variables: bytes_transferred: " << bytes_transferred << ", block_size: " << block_size << ", iteration: " << iteration << endl;
-				cout << "Variables [con't]: base_address: " << base_address << ", initial_address: " << initial_address << endl;
-				cout << "Variables [con't]: base_address-initial_address: " << base_address-initial_address << endl;
+				cout << "Variables [con't]: base_address: " << base_address << endl;
 				break;
 			}
 		} else {
@@ -352,6 +405,13 @@ void Memscan::freeze() {
 			SIZE_T bytes_transferred = 0;
 			if (0 == WriteProcessMemory(processHandle, HMODULE(address), &write_val, SIZE_T(m->size), &bytes_transferred)) {
 				if (ERROR_NOACCESS == GetLastError()) {
+					MEMORY_BASIC_INFORMATION mem;
+					VirtualQueryEx(processHandle, HMODULE(address), &mem, sizeof(MEMORY_BASIC_INFORMATION));
+					cout << hex << mem.AllocationProtect << endl;
+					cout << mem.State << endl;
+					cout << mem.Protect << endl;
+					cout << mem.Type << dec << endl;
+
 					cout << "WriteProcessMemory() failed with ERROR_NOACCESS error with address " << hex << address << dec << "." << endl;
 				} else {
 					cout << "WriteProcessMemory() failed with address " << hex << address << dec << " and error " << GetLastError() << "." << endl;
