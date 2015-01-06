@@ -7,7 +7,7 @@ memscan
 
 Start a memory scan for a process with 
 
-`memscan -cmd <processName>`
+`memscan <processName>`
 
 That will start a memory scan for the process with default settings.
 
