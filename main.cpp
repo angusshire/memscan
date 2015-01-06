@@ -26,7 +26,6 @@ int main(int argc, char* argv[]) {
 	run_tests();
 	clock_t beg = clock();
 #endif
-
 	// determines whether current process is running under WOW64.
 	// should always be false, because cannot read memory from a 64-bit module in a 32-bit process (cannot create selector for all addresses on 64-bit, unlike for 32-bit in 16-bit, because 32-bit Windows abandoned selectors)
 	BOOL b = FALSE;
@@ -40,32 +39,40 @@ int main(int argc, char* argv[]) {
 	static Memscan* memscan;
 	// vector of sizes to read from memory
 	vector<SIZE_T> sizes;
+	// true iff size is specified
+	bool SIZE_SPECIFIED = false;
+	// true iff scan value is specified
+	bool VALUE_SPECIFIED = false;
+	// scan value
+	DWORD64 SCAN_VALUE;
+	// type of process being scanned; for now, only user-mode processes are supported
+	PROCESS_MODE process_mode = PROCESS_MODE::USER_MODE;
+	// argument range
+	const int MAX_ARGS = 5, MIN_ARGS = 2;
 	// parses command line arguments	
-	if (argc >= 3 && argc <= 6) {
-		if ((string(argv[1]) != "-cmd") || ((argc == 5 || argc == 6) && (string(argv[3]) != "-v"))) {
-			usage_message();
-			return 0;
-		} else {
-			memscan = new Memscan(argv[2]);
-			if (argc == 4) {
-				if (valid_sizes(argv[3], sizes)) {
-					memscan->setSizeSpecified(true, sizes);
-				} else { 
-					usage_message(); 
-					return 0;
-				}
-			} else if (argc == 5) {
-				memscan->setScanAttribute(Memscan::SCAN_ATTRIBUTE::VALUE, (DWORD64) to_int(argv[4]));
-			} else if (argc == 6) {
-				if (valid_sizes(argv[5], sizes)) {
-					memscan->setScanAttribute(Memscan::SCAN_ATTRIBUTE::VALUE, (DWORD64) to_int(argv[4]));
-					memscan->setSizeSpecified(true, sizes);
-				} else { 
+	if (argc >= MIN_ARGS && argc <= MAX_ARGS) {
+		for (int i = MIN_ARGS; i < argc; i++) {
+			if (string(argv[i]) == "-v") {
+				if ((i+1) < argc) { 
+					i++;
+					VALUE_SPECIFIED = true;
+					SCAN_VALUE = (DWORD64) to_int(argv[i]);
+				} else {
 					usage_message();
 					return 0;
 				}
+			} else if (valid_sizes(argv[i], sizes)) {
+				SIZE_SPECIFIED = true;
+			} else {
+				usage_message();
+				return 0;
 			}
 		}
+		memscan = new Memscan(argv[1], process_mode);
+		if (SIZE_SPECIFIED)
+			memscan->setSizeSpecified(SIZE_SPECIFIED, sizes);
+		if (VALUE_SPECIFIED)
+			memscan->setScanAttribute(Memscan::SCAN_ATTRIBUTE::VALUE, SCAN_VALUE);
 
 		// first scan
 		cout << "Scanning..." << endl;
@@ -79,9 +86,9 @@ int main(int argc, char* argv[]) {
 		#endif
 		
 		// begins secondary thread for freezing values
-			_beginthread([](void* v)->void{
-				memscan->freeze();
-			}, 0, 0);
+		_beginthread([](void* v)->void{
+			memscan->freeze();
+		}, 0, 0);
 			
 		// user-input loop
 		string input;
@@ -176,12 +183,8 @@ int main(int argc, char* argv[]) {
 				else { cout << "Invalid freeze value." << endl; continue; }
 
 				cout << "Size of value, in bytes?" << endl;
-				int freeze_size = 0;
+				DWORD64 freeze_size = 0;
 				if (cin >> freeze_size) { 
-					DWORD64 temp = ~(0xffffffffffffffff << freeze_size * 8);
-					if (temp < freeze_val) { 
-						cout << "Invalid freeze size." << endl; continue; 
-					}
 					cin.ignore(std::numeric_limits<streamsize>::max(), '\n'); }
 				else { cout << "Invalid freeze size." << endl; continue; }
 
@@ -210,8 +213,8 @@ int main(int argc, char* argv[]) {
 
 // prints usage message for memscan app
 void usage_message() {
-	print_format("Usage: memscan [-cmd processImageName [[-v value] [-bwdq]]]", 80, "\t");
-	print_format("-cmd: memscan starts in command line mode (CMD). CMD mode scans specified process for memory addresses and prints matches.", 80, "\t");
+	print_format("Usage: memscan processImageName [-v value] [-bwdq]", 80, "");
+	print_format("memscan scans specified user-mode process for memory addresses and prints matches.", 80, "\t");
 	print_format("-v value: value to match addresses against.", 80, "\t");
 	print_format("-bwdq: specifies combination of container sizes to match addresses against.", 80, "\t");
 	print_format("-b is byte, -w is word (16 bits), -d is doubleword, -q is quadword. Default matches only doublewords.", 80, "\t");
