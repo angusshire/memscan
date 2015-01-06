@@ -1,7 +1,7 @@
 memscan
 =======
 
-`memscan` is a command line utility for scanning a user-mode process's memory. It is compatible with 64-bit Windows, and will not work on 32-bit Windows. 
+`memscan` is a command line utility for scanning a user-mode process's memory. It is compatible with 64-bit Windows, and will not work on 32-bit Windows. For speed, the scan does not support non-aligned addresses.
 
 ### Usage
 
