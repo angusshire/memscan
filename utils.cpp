@@ -4,7 +4,96 @@
 
 #include "utils.h"
 
-// definition for helper functions
+// definitions for util functions
+
+// checks the result of a WINAPI function call for error
+// if ERROR == RESULT && ERROR_EXIT == true, prints an error message and terminates application
+// if ERROR_EXIT == false, returns true iff error occurred
+// args: ERROR: error value; RESULT: actual value; FUNC_NAME: function name; ERROR_EXIT: exit flag
+bool check_winapi_error(DWORD error, DWORD result, string func_name, bool error_exit) {
+	if (error == result && error_exit) {
+		cerr << "Error: " << func_name << " failed. Last error: " << GetLastError() << "." << endl;
+		exit(1);
+	}
+	return (error == result);
+}
+
+// makes pages in the VAS of specified process read/writable; skips over free and reserved page regions
+// args: PROCESS_HANDLE: handle returned by OpenProcess(); PROCESS_MODE: USER_MODE for user-mode process, KERNEL_MODE for kernel-mode process
+void remove_permissions(HANDLE process_handle, PROCESS_MODE process_mode) {	
+	// max and min addresses of VAS
+	DWORD64 VAS_MAX, VAS_MIN;
+
+	BOOL b = FALSE;
+	// if 32-bit, B set to TRUE
+	IsWow64Process(process_handle, &b);
+	if (b == TRUE) {
+		// in 32-bit, user space is lower 2 gibibytes
+		if (PROCESS_MODE::USER_MODE == process_mode) {
+			VAS_MIN = 0x0;
+			VAS_MAX = 0x7FFFFFFF;
+		// in 32-bit, system space is upper 2 gibibytes
+		} else if (PROCESS_MODE::KERNEL_MODE == process_mode) {
+			VAS_MIN = 0x80000000;
+			VAS_MAX = 0xFFFFFFFF;
+		}
+	} else {
+		// in 64-bit, user space is 8 tebibytes
+		if (PROCESS_MODE::USER_MODE == process_mode) {
+			VAS_MIN = 0x0;
+			VAS_MAX = 0x7FFFFFFFFFF;
+		// in 64-bit, system space is 248 tebibytes
+		} else if (PROCESS_MODE::KERNEL_MODE == process_mode) {
+			VAS_MIN = 0xFFFF080000000000;
+			VAS_MAX = 0xFFFFFFFFFFFFFFFF;
+		}
+	}
+
+	// address of page region
+	DWORD64 address = VAS_MIN; 
+	while (address <= VAS_MAX) {
+		MEMORY_BASIC_INFORMATION memfo;
+		// gets page region info
+		if (check_winapi_error(0, VirtualQueryEx(process_handle, HMODULE(address), &memfo, sizeof(MEMORY_BASIC_INFORMATION)), "VirtualQueryEx()", false)) {
+			// max address reached
+			if (ERROR_INVALID_PARAMETER == GetLastError()) {
+				return;
+			} else {
+				cerr << "Error: VirtualQueryEx() failed. Last error: " << GetLastError() << "." << endl;
+				exit(1);
+			}
+		}
+
+		// skip over free regions and reserved regions
+		if (MEM_FREE == memfo.State || MEM_RESERVE == memfo.State) {
+			address += memfo.RegionSize;
+			continue;
+		}
+		DWORD temp;
+		// sets page region to read/writable if not already
+		if (((memfo.Protect & PAGE_NOACCESS) != 0) ||
+			((memfo.Protect & PAGE_READONLY) != 0)) {
+			// if data is shared, must use PAGE_WRITECOPY
+			if (MEM_MAPPED == memfo.Type) {
+				if (check_winapi_error(0, VirtualProtectEx(process_handle, memfo.BaseAddress, memfo.RegionSize, (memfo.Protect & 0xf00) | PAGE_WRITECOPY, &temp), "VirtualProtectEx()", false)) {
+					if (ERROR_INVALID_PARAMETER == GetLastError()) {
+						// do nothing. this is readonly data.
+					} else {
+						cerr << "Error: VirtualProtectEx() failed. Last error: " << GetLastError() << "." << endl;
+						exit(1);
+					} 
+				}
+			} else {
+				check_winapi_error(0, VirtualProtectEx(process_handle, memfo.BaseAddress, memfo.RegionSize, (memfo.Protect & 0xf00) | PAGE_READWRITE, &temp), "VirtualProtectEx()", false);
+			}
+		} else if (((memfo.Protect & PAGE_EXECUTE) != 0) ||
+			((memfo.Protect & PAGE_EXECUTE_READWRITE) != 0)) {
+			check_winapi_error(0, VirtualProtectEx(process_handle, memfo.BaseAddress, memfo.RegionSize, (memfo.Protect & 0xf00) | PAGE_EXECUTE_READWRITE, &temp), "VirtualProtectEx()", true);
+		}
+		// computes addr of next page region
+		address += memfo.RegionSize;
+	}
+}
 
 // converts a string to a hexadecimal HMODULE address
 HMODULE to_hex(string s) {
@@ -71,7 +160,7 @@ void print_format(string s, unsigned int width, string delim) {
 }
 
 // returns the base address of an .exe given a process
-// path is the .exe's file path, process_handle is the value returned by OpenProcess()
+// args: PATH: .exe's file path; PROCESS_HANDLE: handle returned by OpenProcess()
 HMODULE get_base_address(HANDLE process_handle, wstring path) {
 	HMODULE rtn = NULL;
 	DWORD hmarr_size = 10;
