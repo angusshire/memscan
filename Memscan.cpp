@@ -1,7 +1,3 @@
-// Author: 4148
-// Copyright (c) 2014.
-// All rights reserved.
-
 // implementation file for Memscan.h
 
 #include "Memscan.h"
@@ -22,7 +18,7 @@ Memscan::Memscan(string pin, PROCESS_MODE process_mode) {
 		exit(1);
 	}
 
-	// number of processses 	
+	// number of processses
 	DWORD num_processes = 100;
 	// contains all process ids
 	DWORD* process_ids = new DWORD[num_processes];
@@ -98,7 +94,7 @@ Memscan::Memscan(string pin, PROCESS_MODE process_mode) {
 		processHandle = process_handle;
 		baseAddress = base_address;
 	}
-	
+
 	// default SCANATTRIBUTE is NONE
 	scanAttribute = SCAN_ATTRIBUTE::NONE;
 	// first scan
@@ -164,7 +160,7 @@ void Memscan::setSizeSpecified(bool b, vector<SIZE_T>& s) {
 // prints out specified matches formatted by their Match type
 // args: limit: number of entries to print IN TOTAL (default is 100)
 void Memscan::printMatches(size_t limit) {
-	cout << "Printing first " << limit << " matches (" << matches.size() << " matches total)... FORMAT: [base address: offset: value]" << endl;
+	cout << "Printing first " << limit << " matches (" << matches.size() << " matches total)... FORMAT: [base address: offset: value: float]" << endl;
 	ostringstream b, w, d, q;
 	size_t num_entries = 0;
 	for (Match* m : matches) {
@@ -172,13 +168,13 @@ void Memscan::printMatches(size_t limit) {
 			break;
 		}
 		if (1 == m->size) { // size is BYTE
-			b << hex << uppercase << DWORD64(m->address) << nouppercase << dec << ": " << m->offset << ": " << m->value << endl;
+			b << hex << uppercase << DWORD64(m->address) << nouppercase << dec << ": " << m->offset << ": " << m->value << ": " << parse_float(m->value, m->size) << endl;
 		} else if (2 == m->size) { // size is WORD
-			w << hex << uppercase << DWORD64(m->address) << nouppercase << dec << ": " << m->offset << ": " << m->value << endl;
+			w << hex << uppercase << DWORD64(m->address) << nouppercase << dec << ": " << m->offset << ": " << m->value << ": " << parse_float(m->value, m->size) << endl;
 		} else if (4 == m->size) { // size is DWORD
-			d << hex << uppercase << DWORD64(m->address) << nouppercase << dec << ": " << m->offset << ": " << m->value << endl;
+			d << hex << uppercase << DWORD64(m->address) << nouppercase << dec << ": " << m->offset << ": " << m->value << ": " << parse_float(m->value, m->size) << endl;
 		} else if (8 == m->size) { // size is QUADWORD
-			q << hex << uppercase << DWORD64(m->address) << nouppercase << dec << ": " << m->offset << ": " << m->value << endl;
+			q << hex << uppercase << DWORD64(m->address) << nouppercase << dec << ": " << m->offset << ": " << m->value << ": " << parse_float(m->value, m->size) << endl;
 		} else {
 			cout << "Error: size not specified." << endl;
 			exit(1);
@@ -205,7 +201,7 @@ void Memscan::printMatches(size_t limit) {
 
 // adds a Match* to MATCHES
 // args: BASE_ADDRESS: base address of Match; VALUE: value found at address BASE_ADDRESS+(SIZE*OFFSET),
-// [args con't] SIZE: size of VALUE, in bytes; OFFSET: offset to BASE_ADDRESS where VALUE is found, in terms of SIZE 
+// [args con't] SIZE: size of VALUE, in bytes; OFFSET: offset to BASE_ADDRESS where VALUE is found, in terms of SIZE
 void Memscan::addMatch(HMODULE base_address, DWORD64 value, size_t size, size_t offset) {
 	Match* match = new Match;
 	match->address = base_address;
@@ -227,7 +223,7 @@ void Memscan::processMemblock(DWORD64* memblock, DWORD64 memblock_size, HMODULE 
 		DWORD64 initial = value;
 		HMODULE matchBaseAddress = base_address + (i * 2); // +(i*2) because HMODULE values are incremented in sizeof(int) units; DWORD64 = 2 * sizeof(int)
 		for (SIZE_T size : sizes) {
-			DWORD64 mask = 0; 
+			DWORD64 mask = 0;
 			if (size == 8) { // necessary because left shift is undefined if right operand equals to number of bits in left operand
 				mask = 0xffffffffffffffff;
 			} else {
@@ -306,7 +302,7 @@ void Memscan::scan() {
 					processMemblock(memblock, num_d64, base_address);
 					base_address += increment;
 				}
-			} else {	
+			} else {
 				cout << "Warning: ReadProcessMemory() failed in " << basename(__FILE__) << ":" << __LINE__ << ". Last error: " << GetLastError() << "." << endl;
 				cout << "Variables: bytes_transferred: " << bytes_transferred << ", block_size: " << block_size << ", iteration: " << iteration << endl;
 				cout << "Variables [con't]: base_address: " << base_address << endl;
@@ -331,18 +327,20 @@ void Memscan::rescan() {
 		matches.erase(remove_if(matches.begin(), matches.end(), [this](Match* m)->bool{
 			SIZE_T bytes_transferred;
 			DWORD64 value = 0;
-			DWORD64 address = DWORD64(m->address) + DWORD64((m->size) * (m->offset)); 
+			DWORD64 address = DWORD64(m->address) + DWORD64((m->size) * (m->offset));
 			if (0 == ReadProcessMemory(processHandle, (HMODULE) address, &value, m->size, &bytes_transferred)) {
 				cout << "Warning: ReadProcessMemory() failed in rescan()." << endl;
 				return false;
-			} 
+			}
 
 			// if attribute condition is satisifed, leave Match; otherwise, erase it
 			if (((scanAttribute == SCAN_ATTRIBUTE::CHANGED) && m->value != value) ||
 				((scanAttribute == SCAN_ATTRIBUTE::UNCHANGED) && m->value == value) ||
 				((scanAttribute == SCAN_ATTRIBUTE::INCREASED) && m->value < value) ||
 				((scanAttribute == SCAN_ATTRIBUTE::DECREASED) && m->value > value) ||
-				((scanAttribute == SCAN_ATTRIBUTE::VALUE) && value == scanValue)) {
+				((scanAttribute == SCAN_ATTRIBUTE::VALUE) && value == scanValue) ||
+				((scanAttribute == SCAN_ATTRIBUTE::FLOAT_INCREASED) && (parse_float(m->value, m->size) < parse_float(value, m->size))) ||
+				((scanAttribute == SCAN_ATTRIBUTE::FLOAT_DECREASED) && (parse_float(m->value, m->size) > parse_float(value, m->size)))) {
 				m->value = value;
 				return false;
 			} else {
@@ -373,7 +371,7 @@ void Memscan::newscan(vector<SIZE_T>& s) {
 
 // adds a Match* to FROZEN
 // args: BASE_ADDRESS: base address of Match; VALUE: value to be written at address BASE_ADDRESS+(SIZE*OFFSET),
-// [args con't] SIZE: size of VALUE, in bytes; OFFSET: offset to BASE_ADDRESS where VALUE is to be written, in terms of SIZE 
+// [args con't] SIZE: size of VALUE, in bytes; OFFSET: offset to BASE_ADDRESS where VALUE is to be written, in terms of SIZE
 void Memscan::addFrozen(HMODULE base_address, DWORD64 value, size_t size, size_t offset) {
 	Match* match = new Match;
 	match->address = base_address;
