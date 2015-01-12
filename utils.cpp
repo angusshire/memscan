@@ -1,10 +1,25 @@
-// Author: 4148
-// Copyright (c) 2014.
-// All rights reserved.
-
 #include "utils.h"
 
-// definitions for util functions
+// definitions for util functionss
+
+// returns a floating-point representation of VALUE
+// returns 0 if size is less than 4 bytes, or if no compatible datatype found
+long double parse_float(DWORD64 value, size_t size) {
+	// lazy solution to parsing floats less than 4 bytes
+	if (4 > size) {
+		return 0;
+	} else {
+		if (sizeof(long double) == size) {
+			return long double(value);
+		} else if (sizeof(double) == size) {
+			return double(value);
+		} else if (sizeof(float) == size) {
+			return float(value);
+		} else {
+			return 0; // no matching floating-point datatypes compatible with SIZE
+		}
+	}
+}
 
 // checks the result of a WINAPI function call for error
 // if ERROR == RESULT && ERROR_EXIT == true, prints an error message and terminates application
@@ -20,7 +35,7 @@ bool check_winapi_error(DWORD error, DWORD result, string func_name, bool error_
 
 // makes pages in the VAS of specified process read/writable; skips over free and reserved page regions
 // args: PROCESS_HANDLE: handle returned by OpenProcess(); PROCESS_MODE: USER_MODE for user-mode process, KERNEL_MODE for kernel-mode process
-void remove_permissions(HANDLE process_handle, PROCESS_MODE process_mode) {	
+void remove_permissions(HANDLE process_handle, PROCESS_MODE process_mode) {
 	// max and min addresses of VAS
 	DWORD64 VAS_MAX, VAS_MIN;
 
@@ -50,7 +65,7 @@ void remove_permissions(HANDLE process_handle, PROCESS_MODE process_mode) {
 	}
 
 	// address of page region
-	DWORD64 address = VAS_MIN; 
+	DWORD64 address = VAS_MIN;
 	while (address <= VAS_MAX) {
 		MEMORY_BASIC_INFORMATION memfo;
 		// gets page region info
@@ -81,7 +96,7 @@ void remove_permissions(HANDLE process_handle, PROCESS_MODE process_mode) {
 					} else {
 						cerr << "Error: VirtualProtectEx() failed. Last error: " << GetLastError() << "." << endl;
 						exit(1);
-					} 
+					}
 				}
 			} else {
 				check_winapi_error(0, VirtualProtectEx(process_handle, memfo.BaseAddress, memfo.RegionSize, (memfo.Protect & 0xf00) | PAGE_READWRITE, &temp), "VirtualProtectEx()", false);
@@ -156,7 +171,7 @@ void print_format(string s, unsigned int width, string delim) {
 			cout << s.substr(start, increment) << endl << delim;
 		}
 		start += increment;
-	}	
+	}
 }
 
 // returns the base address of an .exe given a process
@@ -191,7 +206,7 @@ HMODULE get_base_address(HANDLE process_handle, wstring path) {
 			break;
 		}
 	}
-	
+
 	delete[] module_path;
 	delete[] hmarr;
 	return rtn;
