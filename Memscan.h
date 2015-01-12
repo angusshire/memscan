@@ -1,7 +1,3 @@
-// Author: 4148
-// Copyright (c) 2014.
-// All rights reserved.
-
 // header file for Memscan.cpp
 
 #include <iostream>
@@ -43,9 +39,13 @@ public:
 		// set iff should scan for SCANVALUE in MATCHES
 		VALUE,
 		// set iff should scan for everything; this is the default
-		NONE
+		NONE,
+		// set iff should scan for increased floating-point values in MATCHES; RESCAN must be true
+		FLOAT_INCREASED,
+		// set iff should scan for decreased floating-point values in MATCHES; RESCAN must be true
+		FLOAT_DECREASED
 	};
-	
+
 	// PUBLIC METHODS
 	// constructor sets instance vars
 	// args: pin: name of process to be scanned
@@ -71,7 +71,7 @@ public:
 	void newscan(vector<SIZE_T>& s);
 	// adds a Match* to FROZEN
 	// args: BASE_ADDRESS: base address of Match; VALUE: value to be written at address BASE_ADDRESS+(SIZE*OFFSET),
-	// [args con't] SIZE: size of VALUE, in bytes; OFFSET: offset to BASE_ADDRESS where VALUE is to be written, in terms of SIZE 
+	// [args con't] SIZE: size of VALUE, in bytes; OFFSET: offset to BASE_ADDRESS where VALUE is to be written, in terms of SIZE
 	void addFrozen(HMODULE base_address, DWORD64 value, size_t size, size_t offset);
 	// freezes Matches* in FROZEN at 100ms intervals
 	// this method should be called in a secondary thread
@@ -102,13 +102,13 @@ private:
 	SCAN_ATTRIBUTE scanAttribute;
 	// max and min addresses of VAS
 	DWORD64 VAS_MAX, VAS_MIN;
-	
+
 	// HELPER METHODS
 	// frees memory and removes everything in MATCHES
 	void deleteMatches();
 	// adds a Match* to MATCHES
 	// args: BASE_ADDRESS: base address of Match; VALUE: value found at address BASE_ADDRESS+(SIZE*OFFSET),
-	// [args con't] SIZE: size of VALUE, in bytes; OFFSET: offset to BASE_ADDRESS where VALUE is found, in terms of SIZE 
+	// [args con't] SIZE: size of VALUE, in bytes; OFFSET: offset to BASE_ADDRESS where VALUE is found, in terms of SIZE
 	void addMatch(HMODULE base_address, DWORD64 value, size_t size, size_t offset);
 	// processes the MEMBLOCK by finding matches to SCANVALUE (if specified) of specified size; adds matches to MATCHES
 	// args: MEMBLOCK: array of read memory values; MEMBLOCK_SIZE: size of memory block; BASE_ADDRESS: address where first value in MEMBLOCK was read
@@ -116,7 +116,7 @@ private:
 	// rescans MATCHES with specified attribute
 	void rescan();
 	// frees memory and removes everything in FROZEN
-	void deleteFrozen();	
+	void deleteFrozen();
 	// sets VAS_MIN and VAS_MAX
 	void setVasBounds();
 };
