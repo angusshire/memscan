@@ -1,7 +1,3 @@
-// Author: 4148
-// Copyright (c) 2014.
-// All rights reserved.
-
 #include <iostream>
 #include <string>
 #include <vector>
@@ -34,7 +30,7 @@ int main(int argc, char* argv[]) {
 		cerr << "Error: Current process is running under WOW64." << endl;
 		exit(1);
 	}
-	
+
 	// scan process
 	static Memscan* memscan;
 	// vector of sizes to read from memory
@@ -49,11 +45,11 @@ int main(int argc, char* argv[]) {
 	PROCESS_MODE process_mode = PROCESS_MODE::USER_MODE;
 	// argument range
 	const int MAX_ARGS = 5, MIN_ARGS = 2;
-	// parses command line arguments	
+	// parses command line arguments
 	if (argc >= MIN_ARGS && argc <= MAX_ARGS) {
 		for (int i = MIN_ARGS; i < argc; i++) {
 			if (string(argv[i]) == "-v") {
-				if ((i+1) < argc) { 
+				if ((i+1) < argc) {
 					i++;
 					VALUE_SPECIFIED = true;
 					SCAN_VALUE = (DWORD64) to_int(argv[i]);
@@ -84,15 +80,15 @@ int main(int argc, char* argv[]) {
 			double diff = double(end - beg) / CLOCKS_PER_SEC;
 			cout << "First scan took " << diff << " seconds." << endl;
 		#endif
-		
+
 		// begins secondary thread for freezing values
 		_beginthread([](void* v)->void{
 			memscan->freeze();
 		}, 0, 0);
-			
+
 		// user-input loop
 		string input;
-		do { 
+		do {
 			cout << "'print': print matches." << endl;
 			cout << "'new': begin new scan for specified memory units." << endl;
 			cout << "'criteria': specify scan critera." << endl;
@@ -125,6 +121,8 @@ int main(int argc, char* argv[]) {
 					cout << "'increased': scan matches for increased values." << endl;
 					cout << "'decreased': scan matches for decreased values." << endl;
 					cout << "'exit': return to main input loop." << endl;
+					cout << "'float i': scan matches for increased floating-point values." << endl;
+					cout << "'float d': scan matches for decreased floating-point values." << endl;
 					getline(cin, inner_input);
 					if (inner_input == "exit") {
 						cout << "Returning to main input loop..." << endl;
@@ -159,6 +157,16 @@ int main(int argc, char* argv[]) {
 						cout << "Rescanning for decreased values..." << endl;
 						memscan->scan();
 						cout << "Scan complete." << endl;
+					} else if (inner_input == "float i") {
+						memscan->setScanAttribute(Memscan::SCAN_ATTRIBUTE::FLOAT_INCREASED);
+						cout << "Rescanning for float increased values..." << endl;
+						memscan->scan();
+						cout << "Scan complete." << endl;
+					} else if (inner_input == "float d") {
+						memscan->setScanAttribute(Memscan::SCAN_ATTRIBUTE::FLOAT_DECREASED);
+						cout << "Rescanning for float decreased values..." << endl;
+						memscan->scan();
+						cout << "Scan complete." << endl;
 					} else {
 						cout << "Invalid input. Please try again." << endl;
 						continue;
@@ -172,19 +180,19 @@ int main(int argc, char* argv[]) {
 
 				cout << "Offset to base address, in bytes?" << endl;
 				int offset = 0;
-				if (cin >> offset) { 
+				if (cin >> offset) {
 					if (offset >= 8 || offset < 0) { cout << "Invalid offset." << endl; continue; }
 					cin.ignore(std::numeric_limits<streamsize>::max(), '\n'); }
 				else { cout << "Invalid offset." << endl; continue; }
 
 				cout << "Write with what integer value?" << endl;
 				int freeze_val = 0;
-				if (cin >> freeze_val) { cin.ignore(std::numeric_limits<streamsize>::max(), '\n'); } 
+				if (cin >> freeze_val) { cin.ignore(std::numeric_limits<streamsize>::max(), '\n'); }
 				else { cout << "Invalid freeze value." << endl; continue; }
 
 				cout << "Size of value, in bytes?" << endl;
 				DWORD64 freeze_size = 0;
-				if (cin >> freeze_size) { 
+				if (cin >> freeze_size) {
 					cin.ignore(std::numeric_limits<streamsize>::max(), '\n'); }
 				else { cout << "Invalid freeze size." << endl; continue; }
 
@@ -277,7 +285,7 @@ void run_tests() {
 	assert(valid_sizes("-qbdw", s));
 	assert(s.size() == 4);
 	assert(*(find(s.begin(), s.end(), 1)) == 1 && *(find(s.begin(), s.end(), 2)) == 2 && *(find(s.begin(), s.end(), 4)) == 4 && *(find(s.begin(), s.end(), 8)) == 8);
-	
+
 	// TESTS FOR TO_INT()
 	// simple cases
 	assert(to_int("-") == 0);
