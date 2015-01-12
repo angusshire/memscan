@@ -1,7 +1,3 @@
-// Author: 4148
-// Copyright (c) 2014.
-// All rights reserved.
-
 #include <string>
 #include <iostream>
 using namespace std;
@@ -17,6 +13,7 @@ void print_format(string s, unsigned int width, string delim);
 int to_int(string s);
 HMODULE to_hex(string s);
 DWORD64 to_hex(char c);
+long double parse_float(DWORD64 value, size_t size);
 
 // WINAPI utilities
 bool check_winapi_error(DWORD expected, DWORD result, string function_name, bool error_exit);
