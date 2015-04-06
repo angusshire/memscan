@@ -20,3 +20,7 @@ You can also specify the combination of memory units you want to scan for (e.g.,
 `memscan <processName> -dq`
 
 Would scan the process for dwords and quadwords.
+
+### License
+greenhat is distributed under the GNU General Public License v3.0 (GPLv3).
+
